@@ -21,19 +21,41 @@ Namespace, PVC, Service i Ingress sa zastosowane. Ruch po hoscie jest zweryfikow
 end-to-end (takze przez publiczne IPv6). Tymczasowo Service obsluguje
 `deploy/na-fali-placeholder` (nginx), zeby sciezka byla sprawdzalna przed zbudowaniem obrazu.
 
-## Uruchomienie wlasciwej aplikacji
+## Uruchomienie — od zera do wdrozenia
 
-1. Zbuduj obraz i wypchnij go (np. `ghcr.io/shugopl/na-fali:<tag>`).
-2. Wpisz tag do `20-deployment.yaml` i `repoURL` do `argocd/application.yaml`.
-3. Wypchnij to repo na GitHuba, potem:
+Repo jest **prywatne**, a ten host nie ma klucza SSH, wiec kroki 1-2 musisz wykonac sam.
+
+1. **Wypchnij kod** (commit lokalny juz istnieje, remote ustawiony):
+
+   ```sh
+   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ''   # jesli nie masz klucza
+   # klucz .pub dodaj w GitHub -> Settings -> SSH keys
+   git push -u origin main
+   ```
+
+2. **Daj ArgoCD dostep do repo** — patrz `argocd/repo-secret.example.yaml`
+   (deploy key read-only wystarczy).
+
+3. **Wlacz Application**:
 
    ```sh
    kubectl apply -f k3s/argocd/application.yaml
-   kubectl -n na-fali delete deploy,cm na-fali-placeholder   # usun placeholder
    ```
 
-Kontrakt kontenera (wg `tests/test_server.py`): nasluch na `HOST`/`PORT`,
-baza w `DB_PATH`, health pod `GET /api/health`.
+4. **Poczekaj na obraz.** Push na `main` uruchamia workflow, ktory buduje obraz
+   do `ghcr.io/shugopl/na-fali:<sha>`, wpisuje tag do `k3s/20-deployment.yaml`
+   i commituje go z powrotem — ArgoCD podchwytuje zmiane i synchronizuje.
+   Pakiet w ghcr musi byc widoczny dla klastra: albo ustaw go na public
+   (Package settings -> Change visibility), albo dodaj `imagePullSecrets`.
+
+5. **Usun placeholder**, gdy realny pod wstanie:
+
+   ```sh
+   kubectl -n na-fali delete deploy,cm na-fali-placeholder
+   ```
+
+Kontrakt kontenera: nasluch na `HOST`/`PORT`, baza w `DB_PATH`, health pod
+`GET /api/health`, dozwolone domeny w `ALLOWED_HOSTS`.
 
 ## Uwagi
 
