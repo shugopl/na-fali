@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: na-fali
+  namespace: na-fali
+  labels:
+    app.kubernetes.io/name: na-fali
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: na-fali.shugo.com.pl
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: na-fali
+                port:
+                  number: 80
+  # TLS konczy sie na Cloudflare (tak jak dla simple-java-api), wiec origin
+  # serwuje HTTP. Jesli przejdziesz na tryb Full (strict) albo wystawisz
+  # domene bez proxy, dodaj cert-managera i odkomentuj:
+  # tls:
+  #   - hosts: [na-fali.shugo.com.pl]
+  #     secretName: na-fali-tls

@@ -1,0 +1,16 @@
+# Baza SQLite kursu (server.py -> DB_PATH). local-path jest RWO i zwiazany
+# z jednym wezlem, dlatego Deployment ponizej ma replicas: 1 i strategie Recreate.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: na-fali-data
+  namespace: na-fali
+  labels:
+    app.kubernetes.io/name: na-fali
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: na-fali
+  namespace: na-fali
+  labels:
+    app.kubernetes.io/name: na-fali
+spec:
+  # SQLite na wolumenie RWO -> jedna instancja, brak rolling update.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: na-fali
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: na-fali
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001            # zeby proces mogl pisac do PVC
+      containers:
+        - name: na-fali
+          # TODO: podmien na realny tag po zbudowaniu obrazu (CI w .github/workflows).
+          image: ghcr.io/shugopl/na-fali:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "8080"
+            - name: DB_PATH
+              value: /data/course.sqlite3
+            # Serwer odrzuca zadania o nieznanym naglowku Host (ochrona przed
+            # DNS rebinding), wiec domena musi byc tu wymieniona.
+            - name: ALLOWED_HOSTS
+              value: na-fali.shugo.com.pl
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: na-fali-data
+        - name: tmp
+          emptyDir: {}

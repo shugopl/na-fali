@@ -1,0 +1,10 @@
+.git
+.github
+k3s
+tests
+offline
+scripts
+*.md
+__pycache__
+*.pyc
+data

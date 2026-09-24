@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: na-fali
+  namespace: na-fali
+  labels:
+    app.kubernetes.io/name: na-fali
+spec:
+  selector:
+    app.kubernetes.io/name: na-fali
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
