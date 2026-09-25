@@ -26,7 +26,7 @@ spec:
       containers:
         - name: na-fali
           # TODO: podmien na realny tag po zbudowaniu obrazu (CI w .github/workflows).
-          image: ghcr.io/shugopl/na-fali:latest
+          image: ghcr.io/shugopl/na-fali:7abaacf23b07db4ca99c2ddf52631ea0d626a5fd
           imagePullPolicy: IfNotPresent
           env:
             - name: HOST
