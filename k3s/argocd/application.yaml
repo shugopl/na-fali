@@ -1,4 +1,5 @@
-# Zastosuj dopiero gdy repo bedzie wypchniete:
+# Repo jest publiczne, wiec ArgoCD klonuje je po HTTPS anonimowo — zaden
+# sekret z poswiadczeniami nie jest potrzebny (patrz repo-secret.example.yaml).
 #   kubectl apply -f k3s/argocd/application.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -8,7 +9,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: git@github.com:shugopl/na-fali.git
+    repoURL: https://github.com/shugopl/na-fali.git
     targetRevision: HEAD
     path: k3s
   destination:

@@ -23,9 +23,14 @@ spec:
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001            # zeby proces mogl pisac do PVC
+      # Pakiet ghcr.io/shugopl/na-fali jest prywatny; sekret tworzony recznie,
+      # celowo poza gitem (repo jest publiczne) — patrz README.
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: na-fali
-          # TODO: podmien na realny tag po zbudowaniu obrazu (CI w .github/workflows).
+          # Te linie nadpisuje CI (.github/workflows/deploy.yml) po kazdym buildzie —
+          # nie edytuj taga recznie, zostanie zastapiony.
           image: ghcr.io/shugopl/na-fali:7abaacf23b07db4ca99c2ddf52631ea0d626a5fd
           imagePullPolicy: IfNotPresent
           env:
