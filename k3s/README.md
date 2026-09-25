@@ -71,10 +71,62 @@ sam, to dostep do **prywatnego** pakietu w ghcr (krok 2).
 Kontrakt kontenera: nasluch na `HOST`/`PORT`, baza w `DB_PATH`, health pod
 `GET /api/health`, dozwolone domeny w `ALLOWED_HOSTS`.
 
+## Ochrona originu
+
+Origin odpowiada po IPv6, wiec bez filtrowania jest osiagalny z internetu
+bezposrednio, z pominieciem Cloudflare — a wtedy znika rate limiting i WAF,
+a pod spodem stoi serwer z biblioteki standardowej Pythona. Ukrywanie adresu
+nie jest kontrola: pojedynczy `/128` w zakresie hostingodawcy jest skanowalny,
+a originy za Cloudflare wyciekaja tez przez logi Certificate Transparency
+i historyczne rekordy DNS.
+
+Chroni go tabela nftables `cf-origin` na wezle. Domyslnie odrzuca ruch wchodzacy
+po IPv6 na `eth0`, przepuszczajac tylko:
+
+- odpowiedzi na polaczenia zainicjowane przez wezel (`ct state established,related`),
+- **caly ICMPv6** — bez NDP i Path MTU Discovery IPv6 przestaje dzialac,
+- `tcp/22` i `tcp/6443` — administracja,
+- `tcp/80` i `tcp/443` **wylacznie z opublikowanych zakresow IPv6 Cloudflare**.
+
+Zamyka to przy okazji dwie rzeczy, ktore wczesniej byly w internecie: kubelet
+(`10250/tcp`) oraz VXLAN flannela (`8472/udp`, protokol bez uwierzytelniania).
+
+Zrodlem prawdy jest `host/cf-origin-refresh`: generuje
+`/etc/nftables.d/cloudflare-origin.nft` i laduje go, a `cf-origin-refresh.timer`
+odswieza liste raz w tygodniu — zwietrzala lista po cichu odcielaby czesc
+odwiedzajacych. Nieudane pobranie zostawia dzialajace reguly bez zmian, a kazdy
+wygenerowany plik przechodzi `nft -c` przed zaladowaniem.
+
+Instalacja na nowym wezle:
+
+```sh
+install -m 750 k3s/host/cf-origin-refresh /usr/local/sbin/
+install -m 644 k3s/host/cf-origin-refresh.service k3s/host/cf-origin-refresh.timer /etc/systemd/system/
+printf '\ninclude "/etc/nftables.d/*.nft"\n' >> /etc/nftables.conf
+systemctl daemon-reload && systemctl enable --now cf-origin-refresh.timer
+/usr/local/sbin/cf-origin-refresh
+```
+
+Diagnostyka i wycofanie:
+
+```sh
+nft list counters table inet cf-origin   # co i ile odpada
+nft delete table inet cf-origin          # wycofanie w calosci
+```
+
+Liczniki, a nie logi, bo `julia120` jest kontenerem LXC — netfilterowy `log`
+trafia do ringu jadra hosta i z wnetrza kontenera jest niewidoczny.
+
+**Nie restartuj `nftables.service`** przy dzialajacym k3s: `/etc/nftables.conf`
+zaczyna sie od `flush ruleset`, co zmiotloby takze lancuchy kube-proxy
+i kube-routera i na chwile zerwalo siec klastra. Reguly przeladowuj przez
+`/usr/local/sbin/cf-origin-refresh`.
+
 ## Uwagi
 
 - **DNS**: rekord `na-fali.shugo.com.pl` trzeba dodac w Cloudflare — AAAA na
-  `2a01:4f9:2b:289c::120` z wlaczonym proxy (tak jak `simple-java-api`).
+  publiczne IPv6 wezla, z wlaczonym proxy (tak jak `simple-java-api`).
+  Adresu origin nie zapisujemy w repo; odczytaj go z `ip -6 addr show dev eth0`.
   IPv4 klastra (`192.168.1.120`) jest prywatne i nie nadaje sie na origin.
 - **TLS** konczy sie na Cloudflare, origin serwuje HTTP. Przy trybie
   Full (strict) dolozyc cert-managera i odkomentowac blok `tls:` w Ingressie.

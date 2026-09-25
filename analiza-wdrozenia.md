@@ -36,8 +36,8 @@ gdy wstanie realny pod.
 
 **DNS**: rekord dodany, `na-fali.shugo.com.pl` rozwiazuje sie na Cloudflare.
 TLS konczy sie na Cloudflare, origin serwuje HTTP (tak jak `simple-java-api`).
-IPv4 klastra (`192.168.1.120`) jest prywatne — originem jest IPv6
-`2a01:4f9:2b:289c::120`.
+IPv4 klastra (`192.168.1.120`) jest prywatne — originem jest publiczne IPv6
+wezla (adresu nie zapisujemy w repo, patrz `k3s/README.md` / "Ochrona originu").
 
 ## 3. Backend
 

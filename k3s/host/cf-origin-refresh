@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Generuje i laduje tabele nftables chroniaca origin tego wezla.
+
+Domyslnie odrzuca ruch wchodzacy po IPv6 na interfejsie zewnetrznym. Wyjatki:
+odpowiedzi na polaczenia wychodzace, ICMPv6, administracja (22, 6443) oraz
+ruch web (80, 443) wylacznie z opublikowanych zakresow Cloudflare.
+
+Uruchamiany przez cf-origin-refresh.timer, zeby lista zakresow nie zwietrzala.
+Przy bledzie pobierania NIE rusza dzialajacych regul.
+"""
+import datetime, ipaddress, pathlib, subprocess, sys, urllib.request
+
+CF_URL = "https://www.cloudflare.com/ips-v6"
+OUT = pathlib.Path("/etc/nftables.d/cloudflare-origin.nft")
+IFACE = "eth0"
+ADMIN_PORTS = "22, 6443"
+MIN_RANGES = 5          # Cloudflare publikuje ~7; mniej = odpowiedz podejrzana
+
+def fetch_ranges():
+    # Cloudflare odrzuca domyslny User-Agent urlliba z HTTP 403.
+    req = urllib.request.Request(CF_URL, headers={"User-Agent": "cf-origin-refresh/1"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        if r.status != 200:
+            raise RuntimeError(f"{CF_URL} zwrocil HTTP {r.status}")
+        body = r.read().decode()
+    nets = []
+    for line in body.split():
+        net = ipaddress.ip_network(line.strip(), strict=True)   # rzuci przy smieciach
+        if net.version != 6:
+            raise RuntimeError(f"nie-IPv6 w odpowiedzi: {line}")
+        nets.append(net)
+    if len(nets) < MIN_RANGES:
+        raise RuntimeError(f"tylko {len(nets)} zakresow, oczekiwano >= {MIN_RANGES}")
+    return nets
+
+def render(nets):
+    elements = ",\n\t\t\t".join(str(n) for n in nets)
+    stamp = datetime.date.today().isoformat()
+    return f"""#!/usr/sbin/nft -f
+# WYGENEROWANE przez /usr/local/sbin/cf-origin-refresh — nie edytuj recznie.
+# Zakresy Cloudflare pobrane z {CF_URL} dnia {stamp}.
+#
+# Wycofanie:  nft delete table inet cf-origin
+# Przegladanie trafien:  nft list table inet cf-origin
+
+table inet cf-origin {{}}
+delete table inet cf-origin
+
+table inet cf-origin {{
+\tcounter drop-web-nie-cloudflare {{}}
+\tcounter drop-kubelet {{}}
+\tcounter drop-vxlan {{}}
+\tcounter drop-pozostale {{}}
+
+\t# Opublikowane zakresy IPv6 Cloudflare.
+\tset cf6 {{
+\t\ttype ipv6_addr
+\t\tflags interval
+\t\telements = {{
+\t\t\t{elements}
+\t\t}}
+\t}}
+
+\t# Priorytet -150: po conntracku (-200), wiec `ct state` dziala, ale przed
+\t# dstnat (-100), wiec widac oryginalny port docelowy, zanim CNI przekieruje
+\t# hostPort Traefika do poda.
+\tchain inbound {{
+\t\ttype filter hook prerouting priority -150; policy accept;
+
+\t\t# Ta tabela rzadzi wylacznie ruchem z internetu po IPv6.
+\t\tiifname != "{IFACE}" accept
+\t\tmeta nfproto != ipv6 accept
+
+\t\t# Odpowiedzi na polaczenia zainicjowane przez wezel (obrazy, apt, git).
+\t\tct state established,related accept
+
+\t\t# ICMPv6 jest obowiazkowy — bez NDP i Path MTU Discovery IPv6 sie psuje.
+\t\tmeta l4proto ipv6-icmp accept
+
+\t\t# Administracja: SSH (tylko klucze) i API k3s.
+\t\ttcp dport {{ {ADMIN_PORTS} }} accept
+
+\t\t# Web wpuszczamy wylacznie z Cloudflare — TLS konczy sie na jego brzegu,
+\t\t# wiec zaden inny ruch nie ma prawa trafic tu bezposrednio.
+\t\ttcp dport {{ 80, 443 }} ip6 saddr @cf6 accept
+
+\t\t# Wszystko inne odpada. Zamiast `log` — nazwane liczniki: ten wezel jest
+\t\t# kontenerem LXC, wiec netfilterowy log trafia do ringu jadra HOSTA i jest
+\t\t# niewidoczny z wnetrza. Liczniki czyta sie przez `nft list counters`.
+\t\ttcp dport {{ 80, 443 }} counter name "drop-web-nie-cloudflare" drop
+\t\ttcp dport 10250 counter name "drop-kubelet" drop
+\t\tudp dport 8472 counter name "drop-vxlan" drop
+\t\tcounter name "drop-pozostale" drop
+\t}}
+}}
+"""
+
+def main():
+    try:
+        nets = fetch_ranges()
+    except Exception as exc:
+        print(f"cf-origin-refresh: pobieranie nieudane ({exc}); "
+              f"zostawiam dotychczasowe reguly bez zmian", file=sys.stderr)
+        return 1
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    tmp = OUT.with_suffix(".nft.new")
+    tmp.write_text(render(nets))
+    subprocess.run(["nft", "-c", "-f", str(tmp)], check=True)   # skladnia OK?
+    tmp.replace(OUT)
+    subprocess.run(["nft", "-f", str(OUT)], check=True)
+    print(f"cf-origin-refresh: zaladowano {len(nets)} zakresow Cloudflare")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

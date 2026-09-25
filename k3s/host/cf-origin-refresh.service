@@ -1,0 +1,11 @@
+[Unit]
+Description=Odswiez zakresy IPv6 Cloudflare w firewallu origin
+Documentation=https://www.cloudflare.com/ips-v6
+After=network-online.target nftables.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cf-origin-refresh
+# Nieudane pobranie zostawia dzialajace reguly bez zmian (kod 1) — nie alarmuj.
+SuccessExitStatus=0 1

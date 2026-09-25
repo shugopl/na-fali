@@ -102,6 +102,14 @@ the fuller write-up of cluster state and open items.
   `replicas: 1` with `strategy: Recreate`. Scaling out needs a different database.
 - TLS terminates at Cloudflare; the origin serves plain HTTP. The cluster's IPv4 is private —
   the origin is reachable over IPv6 only.
+- Because of that, the node's IPv6 inbound traffic is filtered by the nftables table
+  `cf-origin`, generated and loaded by `k3s/host/cf-origin-refresh` (weekly systemd timer).
+  It default-denies on `eth0`, allowing established/related, all ICMPv6, `tcp/22`, `tcp/6443`,
+  and `tcp/80`+`tcp/443` only from Cloudflare's published IPv6 ranges — which also closes
+  kubelet `10250` and flannel's unauthenticated VXLAN `8472/udp`. Diagnose with
+  `nft list counters table inet cf-origin`; the node is an LXC container, so netfilter `log`
+  goes to the host's kernel ring and is invisible from inside. Never restart
+  `nftables.service` while k3s runs — `/etc/nftables.conf` starts with `flush ruleset`.
 - The repo is public, so `k3s/argocd/application.yaml` clones it anonymously over HTTPS and
   needs no credential; `k3s/argocd/repo-secret.example.yaml` survives only as a template for
   a return to a private repo.
