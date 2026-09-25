@@ -31,10 +31,16 @@ sekretu: `kubectl -n na-fali rollout restart deploy/na-fali`.
 - `na-fali-admin` — pierwsze konto administratora. Tworzone przy starcie idempotentnie:
   istniejace haslo nie jest nadpisywane (chyba ze dodasz `ADMIN_RESET_PASSWORD=1`).
 
+  Wartosci trzymaj w pliku poza repo (nie trafia do historii gita ani powloki), a po
+  utworzeniu sekretu plik usun:
+
   ```sh
-  kubectl -n na-fali create secret generic na-fali-admin \
-    --from-literal=ADMIN_EMAIL=tadzioikona@gmail.com \
-    --from-literal=ADMIN_PASSWORD='...'
+  cat > ~/na-fali-admin.env <<'EOF'
+  ADMIN_EMAIL=<adres-e-mail-administratora>
+  ADMIN_PASSWORD=<haslo-administratora>
+  EOF
+  kubectl -n na-fali create secret generic na-fali-admin --from-env-file=$HOME/na-fali-admin.env
+  rm ~/na-fali-admin.env
   ```
 
 - `na-fali-mail` — SMTP do kodow weryfikacyjnych (rejestracja, reset hasla). Dla Gmaila:
@@ -42,12 +48,20 @@ sekretu: `kubectl -n na-fali rollout restart deploy/na-fali`.
   byc tym samym kontem Gmail (inaczej Gmail podmienia nadawce). Limit ok. 500 wiadomosci/dzien.
   Bez tego sekretu kody trafiaja wylacznie do logu poda (`kubectl -n na-fali logs deploy/na-fali`).
 
+  Tak samo z pliku poza repo. Nie wklejaj hasla aplikacji do polecen ani do dokumentacji:
+  publiczne repo jest skanowane (GitGuardian), a nawet przykladowy zestaw host + login +
+  haslo wyglada dla skanera jak wyciek.
+
   ```sh
-  kubectl -n na-fali create secret generic na-fali-mail \
-    --from-literal=SMTP_HOST=smtp.gmail.com --from-literal=SMTP_PORT=587 \
-    --from-literal=SMTP_USER=tadzioikona@gmail.com \
-    --from-literal=SMTP_PASSWORD='haslo-aplikacji' \
-    --from-literal=SMTP_FROM=tadzioikona@gmail.com
+  cat > ~/na-fali-mail.env <<'EOF'
+  SMTP_HOST=smtp.gmail.com
+  SMTP_PORT=587
+  SMTP_USER=<konto-gmail>
+  SMTP_PASSWORD=<haslo-aplikacji-gmail>
+  SMTP_FROM=<to-samo-konto-gmail>
+  EOF
+  kubectl -n na-fali create secret generic na-fali-mail --from-env-file=$HOME/na-fali-mail.env
+  rm ~/na-fali-mail.env
   ```
 
 - `na-fali-registration` (klucz `code`) — tylko ziarno kodu zaproszenia przy pierwszym
