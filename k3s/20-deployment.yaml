@@ -31,7 +31,7 @@ spec:
         - name: na-fali
           # Te linie nadpisuje CI (.github/workflows/deploy.yml) po kazdym buildzie —
           # nie edytuj taga recznie, zostanie zastapiony.
-          image: ghcr.io/shugopl/na-fali:889c08d674bf598a71ce87f694933e3dbbefb5cf
+          image: ghcr.io/shugopl/na-fali:9716035c91fbad1437a77fcc68ab6bd4e56d2f57
           imagePullPolicy: IfNotPresent
           env:
             - name: HOST
