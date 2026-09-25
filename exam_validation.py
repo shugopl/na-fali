@@ -5,7 +5,10 @@ tematycznych, limit czasu na blok i dozwolone odpowiedzi. Kazde naruszenie to
 ValueError — warstwa HTTP mapuje je na 400.
 """
 
-STATUSES = {'active', 'finished', 'abandoned'}
+# Strona przechodzi: active -> between (po kazdym bloku) -> ... -> complete;
+# przerwany egzamin to abandoned. W historii moga byc tylko dwa ostatnie.
+STATUSES = {'active', 'between', 'complete', 'abandoned'}
+FINAL_STATUSES = {'complete', 'abandoned'}
 
 
 def _bank():
@@ -57,8 +60,8 @@ def _validate_exam(exam, rules, questions, bank, historical):
     status = exam.get('status')
     if status not in STATUSES:
         raise ValueError(f'status: niedozwolona wartosc {status!r}')
-    if historical and status == 'active':
-        raise ValueError('history: egzamin w historii nie moze byc aktywny')
+    if historical and status not in FINAL_STATUSES:
+        raise ValueError(f'history: egzamin w historii nie moze miec statusu {status!r}')
 
     _int(exam.get('startedAt'), 'startedAt')
     _optional_int(exam.get('finishedAt'), 'finishedAt')

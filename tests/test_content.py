@@ -54,4 +54,4 @@ class ContentTests(unittest.TestCase):
             self.assertEqual(sum(x['kind']=='band' for x in catalog),11)
             self.assertEqual(Store(path).catalog(),store.catalog())
             with sqlite3.connect(path) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],4)

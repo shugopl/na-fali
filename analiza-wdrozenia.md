@@ -63,6 +63,19 @@ wezla (adresu nie zapisujemy w repo, patrz `k3s/README.md` / "Ochrona originu").
   na konto zastepcze `#legacy`). Tresc kursu publiczna, dane za `401`. Opcjonalny
   `REGISTRATION_CODE` z sekretu `na-fali-registration`. Limit 10 prob logowania /
   rejestracji na 5 minut na adres (`CF-Connecting-IP`).
+- **Konta e-mailowe, kody i admin (2026-09-25, drugi etap)**: nazwa konta to adres e-mail
+  potwierdzany 6-cyfrowym kodem (rejestracja) i kodem resetu hasla; wysylka przez SMTP
+  (Gmail, sekret `na-fali-mail`), bez SMTP kody laduja w logu poda. Schemat v4: `isAdmin`,
+  `verifiedAt`, `lastLoginAt`, tabela `codes`, ustawienia rejestracji w `meta` (panel ma
+  pierwszenstwo przed env). Migracja v3 -> v4 usuwa konta bez adresu e-mail i bez danych
+  (tak zniknelo `smoke-test`). Pierwszy admin z sekretu `na-fali-admin` (idempotentnie).
+  Panel `/api/admin/*` + zakladka „Administracja” na stronie: uzytkownicy z akcjami,
+  ustawienia rejestracji, statystyki i wyniki egzaminow, kopia zapasowa (sqlite backup API
+  do pamieci, `serialize()`, naglowek przestawiony na tryb rollback).
+- **Naprawiony zapis egzaminow**: `exam_validation.py` znal status `finished`, ktorego strona
+  nigdy nie wysyla (uzywa `between` i `complete`), wiec kazde zamkniecie bloku egzaminu
+  konczylo sie 400 i zaden egzamin nie trafial do bazy. Test `test_exams.py` utrwalal ten
+  blad. Teraz statusy pokrywaja sie z `ExamEngine` strony.
 - **Naprawiony baner „Nie mozna otworzyc historii”** po wdrozeniu: serwer zwracal
   `bankVersion: contentRevision` bez `schemaVersion`, pusty workspace egzaminow jako
   `null` i po skasowaniu historii sam licznik zamiast pelnego stanu — klient odrzucal
@@ -137,13 +150,13 @@ Inaczej te dwa bledy blokowalyby build obrazu i nic by sie nie wdrozylo.
 |---|---|---|
 | Baza | SQLite na PVC | Postgres jako StatefulSet |
 | Framework | biblioteka standardowa Pythona | Django (`django-key`, Job bootstrapu) |
-| Sekrety | `ghcr-pull`, opcjonalny `na-fali-registration` | `na-fali-db`, `na-fali-bootstrap`, `na-fali-db-admin` |
+| Sekrety | `ghcr-pull`, opcjonalne `na-fali-admin`, `na-fali-mail`, `na-fali-registration` | `na-fali-db`, `na-fali-bootstrap`, `na-fali-db-admin` |
 | Siec | — | dwie NetworkPolicy |
 | TLS | Cloudflare | `na-fali-tls` w Ingressie |
 
 **Decyzja (2026-09-25): zostajemy przy bibliotece standardowej i SQLite.** Konta
-uzytkownikow, ktorych brakowalo, zostaly dobudowane do istniejacego `server.py`
-(patrz §3), wiec wariant Django + Postgres nie ma juz powodu istniec. Puste katalogi
+uzytkownikow, weryfikacja e-mailem, reset hasla i panel administracyjny zostaly dobudowane
+do istniejacego `server.py` (patrz §3), wiec wariant Django + Postgres nie ma juz powodu istniec. Puste katalogi
 `accounts/`, `templates/registration/`, `config/`, `src/`, `offline/`, `scripts/` to
 pozostalosci tego niezbudowanego wariantu; `tests/test_deployment.py` zostaje
 niezbudowany i poza CI.

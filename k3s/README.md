@@ -22,20 +22,64 @@ ArgoCD Application `na-fali` synchronizuje katalog `k3s/` z brancha `main`
 sa w calosci opisane w repo — recznych `kubectl apply` na nie nie trzeba, a `selfHeal`
 cofnie zmiany zrobione w klastrze obok gita.
 
-Poza gitem zostaja **dwa** sekrety w namespace `na-fali` (repo jest publiczne, wiec
-nie moga trafic do historii):
+Poza gitem zostaja **cztery** sekrety w namespace `na-fali` (repo jest publiczne, wiec
+nie moga trafic do historii). Wszystkie poza `ghcr-pull` sa `optional: true` — pod wstaje
+bez nich, tylko z ograniczona funkcja. Env jest czytany przy starcie, wiec po kazdej zmianie
+sekretu: `kubectl -n na-fali rollout restart deploy/na-fali`.
 
-- `ghcr-pull` — poswiadczenie do prywatnego pakietu w ghcr (krok 2 nizej), wymagany;
-- `na-fali-registration` (klucz `code`) — kod, ktory trzeba podac przy zakladaniu konta.
-  Deployment odwoluje sie do niego z `optional: true`: bez sekretu rejestracja jest otwarta.
+- `ghcr-pull` — poswiadczenie do prywatnego pakietu w ghcr (krok 2 nizej), wymagany.
+- `na-fali-admin` — pierwsze konto administratora. Tworzone przy starcie idempotentnie:
+  istniejace haslo nie jest nadpisywane (chyba ze dodasz `ADMIN_RESET_PASSWORD=1`).
 
   ```sh
-  kubectl -n na-fali create secret generic na-fali-registration --from-literal=code='...'
-  kubectl -n na-fali rollout restart deploy/na-fali     # env czytany przy starcie
+  kubectl -n na-fali create secret generic na-fali-admin \
+    --from-literal=ADMIN_EMAIL=tadzioikona@gmail.com \
+    --from-literal=ADMIN_PASSWORD='...'
   ```
+
+- `na-fali-mail` — SMTP do kodow weryfikacyjnych (rejestracja, reset hasla). Dla Gmaila:
+  wlacz weryfikacje dwuetapowa, wygeneruj **haslo aplikacji** (16 znakow), `SMTP_FROM` musi
+  byc tym samym kontem Gmail (inaczej Gmail podmienia nadawce). Limit ok. 500 wiadomosci/dzien.
+  Bez tego sekretu kody trafiaja wylacznie do logu poda (`kubectl -n na-fali logs deploy/na-fali`).
+
+  ```sh
+  kubectl -n na-fali create secret generic na-fali-mail \
+    --from-literal=SMTP_HOST=smtp.gmail.com --from-literal=SMTP_PORT=587 \
+    --from-literal=SMTP_USER=tadzioikona@gmail.com \
+    --from-literal=SMTP_PASSWORD='haslo-aplikacji' \
+    --from-literal=SMTP_FROM=tadzioikona@gmail.com
+  ```
+
+- `na-fali-registration` (klucz `code`) — tylko ziarno kodu zaproszenia przy pierwszym
+  starcie; potem kod i otwarcie/zamkniecie rejestracji ustawia sie w panelu admina.
 
 ArgoCD ich nie zna, wiec ich nie usunie, ale odtworzenie namespace'u od zera wymaga
 odtworzenia ich recznie.
+
+## Panel administracyjny
+
+Po zalogowaniu kontem z uprawnieniami admina na stronie pojawia sie zakladka
+**Administracja**: przeglad (konta, podejscia, egzaminy, skutecznosc per przedmiot), lista
+uzytkownikow z akcjami (nadaj/odbierz admina, potwierdz recznie, reset hasla e-mailem,
+wyloguj wszedzie, wyczysc historie, eksport JSON, usun), ustawienia rejestracji (otwarta /
+zamknieta, kod zaproszenia) z testem poczty oraz pobranie kopii zapasowej bazy.
+
+Pierwsza rzecz po wdrozeniu: **Ustawienia -> „Wyslij e-mail testowy”** — wysylka jest
+synchroniczna i pokazuje blad SMTP wprost (zle haslo aplikacji, brak sieci).
+
+Przywracanie kopii (plik `.sqlite3` z panelu, tryb rollback — bez plikow `-wal`/`-shm`):
+
+```sh
+kubectl -n na-fali scale deploy/na-fali --replicas=0
+POD=$(kubectl -n na-fali run restore --image=python:3.12-alpine --restart=Never \
+  --overrides='{"spec":{"containers":[{"name":"restore","image":"python:3.12-alpine","command":["sleep","600"],"volumeMounts":[{"name":"data","mountPath":"/data"}]}],"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"na-fali-data"}}]}}' -o name)
+kubectl -n na-fali wait --for=condition=Ready $POD
+kubectl -n na-fali exec restore -- sh -c 'rm -f /data/course.sqlite3 /data/course.sqlite3-wal /data/course.sqlite3-shm'
+kubectl -n na-fali cp ./na-fali-XXXX.sqlite3 restore:/data/course.sqlite3
+kubectl -n na-fali exec restore -- chown 10001:10001 /data/course.sqlite3
+kubectl -n na-fali delete pod restore
+kubectl -n na-fali scale deploy/na-fali --replicas=1
+```
 
 ## Uruchomienie — od zera do wdrozenia
 
@@ -82,8 +126,10 @@ sam, to dostep do **prywatnego** pakietu w ghcr (krok 2).
 Kontrakt kontenera: nasluch na `HOST`/`PORT`, baza w `DB_PATH`, health pod
 `GET /api/health`, dozwolone domeny w `ALLOWED_HOSTS`, `SECURE_COOKIES=1` (flaga Secure na
 cookie sesji — origin mowi czystym HTTP za Cloudflare, wiec sam tego nie wywnioskuje),
-opcjonalny `REGISTRATION_CODE`. Konta i sesje zyja w tej samej bazie SQLite co historia,
-wiec migracja schematu (v2 -> v3) wykonuje sie przy pierwszym starcie nowego obrazu.
+opcjonalne `REGISTRATION_CODE`, `SMTP_*`, `ADMIN_EMAIL`/`ADMIN_PASSWORD`. Konta, sesje, kody
+i ustawienia zyja w tej samej bazie SQLite co historia, wiec migracja schematu wykonuje sie
+przy pierwszym starcie nowego obrazu; poczatek logu poda mowi, co migracja zrobila
+(np. `migracja v4: usunieto 1 kont bez adresu e-mail`) i ktory admin zostal zapewniony.
 
 ## Ochrona originu
 

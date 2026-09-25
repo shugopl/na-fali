@@ -62,21 +62,34 @@ their own through `make_server(page=...)`). **Editing the page needs a server re
 |---|---|---|
 | `GET /api/health` | `{"status": "ok"}` | the only route that skips the host check |
 | `GET /`, `GET /index.html` | the in-memory page | public |
-| `GET /api/me` | `{"user": {"username"} \| null, "codeRequired"}` | public; never 401 |
-| `POST /api/register` | `Store.register` + session cookie | rate-limited, body ≤ 4 KB |
-| `POST /api/login` | `Store.login` + session cookie | rate-limited, body ≤ 4 KB |
+| `GET /api/me` | `{"user", "codeRequired", "registrationOpen", "mailConfigured"}` | public; never 401 |
+| `POST /api/register` | `Store.register` + e-mailed code | returns `{pending, email}`, **no session** |
+| `POST /api/verify` | `Store.verify(email, password, code)` + session | password required on purpose |
+| `POST /api/login` | `Store.login` + session cookie | 401 `{unverified: true}` if not confirmed |
 | `POST /api/logout` | `Store.delete_session`, clears cookie | |
+| `POST /api/reset` | `Store.request_reset` + e-mailed code | always `{pending: true}` |
+| `POST /api/reset/confirm` | `Store.confirm_reset` + session | revokes every other session |
 | `GET /api/state` | `Store.state(user_id)` | needs session |
 | `GET /api/exams` | `Store.exams(user_id)` | needs session |
 | `POST /api/attempts` | `Store.save(user_id, attempts, generation)` | needs session + `bankVersion` |
 | `POST /api/exams` | `Store.exams(user_id, workspace, revision)` | bumps `revision` |
 | `DELETE /api/history` | `Store.clear(user_id, generation)` | bumps `generation`, returns full state |
+| `GET /api/admin/overview` | `Store.overview()` + settings | admin |
+| `GET /api/admin/users` | `Store.users()` with per-user stats | admin |
+| `GET /api/admin/users/<id>/export` | `Store.user_export` (page import format + exams) | admin |
+| `POST /api/admin/users/<id>` | `{action}`: promote, demote, verify, clear, reset, logout | admin; not on self |
+| `DELETE /api/admin/users/<id>` | `Store.delete_user` (cascades) | admin; not on self |
+| `POST /api/admin/settings` | `Store.update_settings` | admin |
+| `POST /api/admin/mail-test` | synchronous `mailer.send` to the admin | admin; SMTP error -> 400 |
+| `GET /api/admin/backup` | `Store.backup()` as `application/octet-stream` | admin; sent outside `_dispatch` |
 
-`do_HEAD` delegates to `do_GET`. Status codes are mapped in one place, `_dispatch`:
-`Unauthorized` -> 401, `Conflict` -> 409, `TooManyRequests` -> 429, `ValueError` (hence also
-`BadRequest`) -> 400, unknown path -> 404, rejected host -> 403. Adding a route means touching
-the right `do_*` method and nothing else. The current user is resolved *inside* the
-`_dispatch` lambda (`self._user()`), so a missing session goes through the same mapping.
+Auth routes (`Handler.AUTH_ROUTES`) and `/api/admin/*` bodies are capped at 4 KB. `do_HEAD`
+delegates to `do_GET`. Status codes are mapped in one place, `_dispatch`: `Unverified` -> 401
+with `unverified: true`, `Unauthorized` -> 401, `Forbidden` -> 403, `Conflict` -> 409,
+`TooManyRequests` -> 429, `ValueError` (hence also `BadRequest`) -> 400, unknown path -> 404,
+rejected host -> 403. The admin user routes are the one regex (`ADMIN_USER_RE`); everything else
+is an exact path. The current user is resolved *inside* the `_dispatch` lambda (`self._user()`,
+`self._admin()`), so a missing session or missing admin flag goes through the same mapping.
 
 **Response shapes the page depends on** (all three broke the deployed site once):
 `state()` must carry `schemaVersion: 2` and `bankVersion == BANK_VERSION` or the client's
@@ -106,15 +119,21 @@ Two optimistic-concurrency counters guard stale browser tabs:
 
 ### Schema migrations
 
-`Store` carries `SCHEMA_VERSION` (now 3) and migrates on open, keyed off `PRAGMA user_version`,
+`Store` carries `SCHEMA_VERSION` (now 4) and migrates on open, keyed off `PRAGMA user_version`,
 as a chain: v1 (snake_case columns, `meta(id, generation)`) -> v2 (camelCase, key-value `meta`)
 -> v3 (`users`, `sessions`, `attempts` keyed by `(userId, id)`, `exams` keyed by `userId`,
-`generation` on `users`). A v1 database with `user_version=0` but an existing `attempts` table
-is treated as v1. The v2 -> v3 step moves any pre-existing shared history to a placeholder
-user `#legacy` (name fails `USERNAME_RE`, hash `'!'`, so nobody can log in as it) and creates
-no such user when the database is empty. Write new migration steps with per-statement
-`execute`, not `executescript` — the latter commits mid-way and breaks the single transaction.
-`tests/test_content.py` and `tests/test_server.py` exercise v1 and v2 fixtures.
+`generation` on `users`) -> v4 (`users.isAdmin/verifiedAt/lastLoginAt`, `codes`, e-mail as the
+account name). A v1 database with `user_version=0` but an existing `attempts` table is treated
+as v1. The v2 -> v3 step moves any pre-existing shared history to a placeholder user `#legacy`
+(not an e-mail, hash `'!'`, so nobody can log in as it) and creates no such user when the
+database is empty. The v3 -> v4 step **deletes accounts whose name is not an e-mail and that
+own no attempts and no exam row** (they could never be confirmed), lowercases names and marks
+existing e-mail accounts as verified; it is idempotent (`PRAGMA table_info` before `ADD COLUMN`)
+because a rolled-back image stamps `user_version=3` and the step then runs again on a v4 file.
+`_migrate` issues an explicit `BEGIN` — in the sqlite3 legacy transaction mode DDL does not open
+a transaction by itself. Write new steps with per-statement `execute`, not `executescript`,
+which commits mid-way. `tests/test_content.py` and `tests/test_server.py` exercise v1, v2 and
+v3 fixtures.
 
 ### Circular import
 
@@ -124,20 +143,50 @@ Keep it that way.
 
 ### Request protection
 
-- **Accounts.** Self-registration (`USERNAME_RE` = 3–32 of `[A-Za-z0-9_.-]`, case-insensitive
-  uniqueness via `COLLATE NOCASE`, password 8–128). Passwords are `hashlib.scrypt` with
-  `n=2**14, r=8, p=1` — **do not raise `n` to 2**15** without `maxmem`; OpenSSL's 32 MiB default
-  makes scrypt raise instead of hash. Hashing happens outside `Store._lock`. Sessions are
-  random tokens stored as SHA-256 in `sessions` (30 days; logout revokes; they survive restarts),
-  sent as cookie `nafali_session; Path=/; HttpOnly; SameSite=Lax`. `Secure` is added only when
-  `SECURE_COOKIES=1` — the origin speaks plain HTTP behind Cloudflare, so it cannot be inferred.
-  The `Cookie` header is parsed by hand because `SimpleCookie` rejects Cloudflare's own cookies.
-  `REGISTRATION_CODE` (env, empty = open) gates registration; `/api/me` exposes only whether a
-  code is required. Login/register share an in-memory `RateLimit` (10 per 5 min per
-  `CF-Connecting-IP` or peer address).
+- **Accounts.** The account name (`users.username`, API field `email`) is a lowercased e-mail
+  (`EMAIL_RE`, ≤ 254 chars; uniqueness via `COLLATE NOCASE`), password 8–128. Registration creates
+  an **unverified** row and e-mails a 6-digit code (`codes`: one active per user, 15 min,
+  5 wrong tries, 60 s resend throttle, hash salted with user id + purpose); `verify` needs the
+  password too, so a stranger who registers your address cannot have you confirm *their*
+  password. Re-registering an unverified address replaces its hash and resends; a verified one
+  is 409. Unverified rows older than 24 h are purged on the next registration. Login checks the
+  password before revealing `unverified`. Password reset (`/api/reset` -> code -> `/api/reset/confirm`)
+  never reveals whether an address exists and revokes all sessions. Wrong-code bookkeeping is
+  committed explicitly inside `_consume_code` because the surrounding `with self._db:` rolls back
+  on the raised `BadRequest`.
+- Passwords are `hashlib.scrypt` with `n=2**14, r=8, p=1` — **do not raise `n` to 2**15** without
+  `maxmem`; OpenSSL's 32 MiB default makes scrypt raise instead of hash. Hashing happens outside
+  `Store._lock`. Sessions are random tokens stored as SHA-256 in `sessions` (30 days; logout
+  revokes; they survive restarts), sent as cookie `nafali_session; Path=/; HttpOnly; SameSite=Lax`.
+  `Secure` is added only when `SECURE_COOKIES=1` — the origin speaks plain HTTP behind
+  Cloudflare, so it cannot be inferred. The `Cookie` header is parsed by hand because
+  `SimpleCookie` rejects Cloudflare's own cookies.
+- **Mail.** `Mailer` = stdlib `smtplib` STARTTLS (`SMTP_HOST/PORT/USER/PASSWORD/FROM`, 20 s
+  timeout, `ssl.create_default_context()` — the alpine image ships CA certs). Codes go out on a
+  daemon thread (`send_async`); failures land on stderr only. Without `SMTP_HOST` the
+  `ConsoleMailer` prints the message to stdout, which is what local runs and the restart test
+  rely on. Tests inject a fake via `make_server(mailer=...)`. The admin "mail test" sends
+  synchronously so SMTP errors reach the panel.
+- **Settings live in `meta`** (`registrationOpen`, `registrationCode`), edited from the admin
+  panel; `REGISTRATION_CODE` from env only seeds a missing key (`seed_settings`). `/api/me`
+  exposes `codeRequired` and `registrationOpen`, never the code itself.
+- **Admin.** `users.isAdmin`; `_admin()` raises `Forbidden`. Bootstrap from `ADMIN_EMAIL` +
+  `ADMIN_PASSWORD` at startup (`ensure_admin`, idempotent: never overwrites an existing password
+  unless `ADMIN_RESET_PASSWORD=1`; an existing account is only promoted). An admin cannot demote
+  or delete itself. `Store.backup()` opens a *separate* connection, copies into `:memory:` and
+  serializes it, then flips header bytes 18–19 to the rollback journal so the download opens
+  without a `-wal` sidecar. Per-user exam stats reuse the page's rule (`exam_result`:
+  `chosen == question.answer`, block passes at `examRules.passPerSubject`, exam passes when
+  `status == 'complete'` and every block passes).
+- Login/register/reset share an in-memory `RateLimit` (10 per 5 min per `CF-Connecting-IP` or
+  peer address); `verify` and `reset/confirm` have their own, looser one (`code_limiter`).
 - The course content is public; anything under `/api/state`, `/api/exams`, `/api/attempts`,
   `/api/history` is 401 without a session. The page checks `/api/me` first and shows a login
-  dialog (`#authDialog`, bottom-right `#accountBar`) instead of the storage-failure banner.
+  dialog (`#authDialog` with modes login / register / verify / reset / resetConfirm driven by
+  `AUTH_MODES`, bottom-right `#accountBar`) instead of the storage-failure banner. Admins get a
+  hidden tab `#adminTab` and the `admin()` view (`renderAdmin`, `adminAction`), all built on the
+  existing `.panel`, `.tablewrap table` and `.btn` classes. `ApiStore.request` attaches
+  `err.status`/`err.data` so the page can react to `unverified`.
 - `Host` and `Origin` must resolve to an allowed name — loopback always, plus whatever
   `ALLOWED_HOSTS` (comma-separated) lists. This blocks DNS rebinding. **Deploying under a new
   domain requires updating `ALLOWED_HOSTS` or every request 403s.**
@@ -152,9 +201,12 @@ Keep it that way.
 ### Exam rules come from data
 
 `BANK['examRules']` drives `exam_validation.py`: 4 subject blocks in a fixed order, 8 questions
-each, 480 s per block. A block's `deadline` must equal that block's `startedAt + 480000` exactly,
-`order` must be a permutation of the option indices, and a block that has not started cannot
-hold answers.
+each, 480 s per block. A block's `deadline` must equal that block's `startedAt + 480000` exactly
+(checked only while `active`), `order` must be a permutation of the option indices, and a block
+that has not started cannot hold answers. Statuses follow the page's `ExamEngine`: `active` ->
+`between` (after each block) -> `complete`, or `abandoned`; only `complete`/`abandoned` may sit
+in `history`. (Until 2026-09-25 the validator knew a `finished` status the page never sends, so
+no exam could ever be saved.)
 
 ## Deployment
 
@@ -183,10 +235,12 @@ the fuller write-up of cluster state and open items.
 - The repo is public, so `k3s/argocd/application.yaml` clones it anonymously over HTTPS and
   needs no credential; `k3s/argocd/repo-secret.example.yaml` survives only as a template for
   a return to a private repo.
-- Two hand-made secrets live outside git in the `na-fali` namespace: `ghcr-pull` (below) and the
-  optional `na-fali-registration` (`key: code`), which the Deployment references with
-  `optional: true` — absent secret means open registration. Env is read at start, so changing
-  the code needs `kubectl -n na-fali rollout restart deploy/na-fali`.
+- Hand-made secrets live outside git in the `na-fali` namespace, all referenced with
+  `optional: true`: `ghcr-pull` (below), `na-fali-registration` (`key: code`, only seeds the
+  invite code on first start), `na-fali-mail` (`SMTP_HOST/PORT/USER/PASSWORD/FROM`; without it
+  verification codes only reach the pod log) and `na-fali-admin` (`ADMIN_EMAIL/ADMIN_PASSWORD`).
+  Env is read at start, so changing any of them needs `kubectl -n na-fali rollout restart
+  deploy/na-fali`. `k3s/README.md` has the exact `create secret` commands.
 - The **ghcr package is private** — package visibility is a separate setting from repo
   visibility. `k3s/20-deployment.yaml` therefore carries `imagePullSecrets: ghcr-pull`, and
   that secret is created by hand in the `na-fali` namespace. It is deliberately absent from

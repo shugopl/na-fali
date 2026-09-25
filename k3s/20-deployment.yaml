@@ -50,9 +50,17 @@ spec:
               value: "1"
             # Kod wymagany przy rejestracji. Sekret tworzy sie recznie i celowo nie
             # ma go w gicie (repo publiczne); brak sekretu = rejestracja otwarta.
+            # Ziarno kodu zaproszenia przy pierwszym starcie; potem rzadzi panel admina.
             - name: REGISTRATION_CODE
               valueFrom:
                 secretKeyRef: { name: na-fali-registration, key: code, optional: true }
+          # Sekrety reczne, poza gitem (repo publiczne). Klucze = nazwy zmiennych:
+          #   na-fali-mail:  SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASSWORD SMTP_FROM
+          #   na-fali-admin: ADMIN_EMAIL ADMIN_PASSWORD  (bootstrap konta administratora)
+          # Bez na-fali-mail kody weryfikacyjne trafiaja tylko do logow poda.
+          envFrom:
+            - secretRef: { name: na-fali-mail, optional: true }
+            - secretRef: { name: na-fali-admin, optional: true }
           ports:
             - name: http
               containerPort: 8080
