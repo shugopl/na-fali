@@ -22,9 +22,20 @@ ArgoCD Application `na-fali` synchronizuje katalog `k3s/` z brancha `main`
 sa w calosci opisane w repo — recznych `kubectl apply` na nie nie trzeba, a `selfHeal`
 cofnie zmiany zrobione w klastrze obok gita.
 
-Poza gitem zostaje **jedna** rzecz: sekret `ghcr-pull` w namespace `na-fali`
-(poswiadczenie do prywatnego pakietu w ghcr). ArgoCD go nie zna, wiec go nie usunie,
-ale odtworzenie namespace'u od zera wymaga odtworzenia go recznie — patrz krok 2 nizej.
+Poza gitem zostaja **dwa** sekrety w namespace `na-fali` (repo jest publiczne, wiec
+nie moga trafic do historii):
+
+- `ghcr-pull` — poswiadczenie do prywatnego pakietu w ghcr (krok 2 nizej), wymagany;
+- `na-fali-registration` (klucz `code`) — kod, ktory trzeba podac przy zakladaniu konta.
+  Deployment odwoluje sie do niego z `optional: true`: bez sekretu rejestracja jest otwarta.
+
+  ```sh
+  kubectl -n na-fali create secret generic na-fali-registration --from-literal=code='...'
+  kubectl -n na-fali rollout restart deploy/na-fali     # env czytany przy starcie
+  ```
+
+ArgoCD ich nie zna, wiec ich nie usunie, ale odtworzenie namespace'u od zera wymaga
+odtworzenia ich recznie.
 
 ## Uruchomienie — od zera do wdrozenia
 
@@ -69,7 +80,10 @@ sam, to dostep do **prywatnego** pakietu w ghcr (krok 2).
    Service'u — i przejmuje czesc ruchu.
 
 Kontrakt kontenera: nasluch na `HOST`/`PORT`, baza w `DB_PATH`, health pod
-`GET /api/health`, dozwolone domeny w `ALLOWED_HOSTS`.
+`GET /api/health`, dozwolone domeny w `ALLOWED_HOSTS`, `SECURE_COOKIES=1` (flaga Secure na
+cookie sesji — origin mowi czystym HTTP za Cloudflare, wiec sam tego nie wywnioskuje),
+opcjonalny `REGISTRATION_CODE`. Konta i sesje zyja w tej samej bazie SQLite co historia,
+wiec migracja schematu (v2 -> v3) wykonuje sie przy pierwszym starcie nowego obrazu.
 
 ## Ochrona originu
 

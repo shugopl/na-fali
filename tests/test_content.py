@@ -45,12 +45,13 @@ class ContentTests(unittest.TestCase):
                 INSERT INTO attempts VALUES('old-attempt','old-session','d1','2026-01-01T00:00:00.000Z',0,0);
                 PRAGMA user_version=1;''')
             store=Store(path)
-            self.assertEqual(store.state()['generation'],7)
-            self.assertEqual(store.state()['attempts'][0]['id'],'old-attempt')
+            uid=store.find_user('#legacy')['id']   # wspolna historia v1/v2 laduje na koncie zastepczym
+            self.assertEqual(store.state(uid)['generation'],7)
+            self.assertEqual(store.state(uid)['attempts'][0]['id'],'old-attempt')
             catalog=store.catalog()['items']
             self.assertEqual(sum(x['kind']=='question' for x in catalog),297)
             self.assertEqual(sum(x['kind']=='q_code' for x in catalog),75)
             self.assertEqual(sum(x['kind']=='band' for x in catalog),11)
             self.assertEqual(Store(path).catalog(),store.catalog())
             with sqlite3.connect(path) as db:
-                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],2)
+                self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0],3)

@@ -10,11 +10,11 @@ class ExamTests(unittest.TestCase):
     def test_new_deadline_and_round_trip_after_restart(self):
         w=workspace();validate_workspace(w)
         with tempfile.TemporaryDirectory() as d:
-            p=Path(d)/'db.sqlite3';s=Store(p)
-            self.assertEqual(s.exams()['revision'],0)
-            s.exams(w,0)
-            self.assertEqual(Store(p).exams(),{'revision':1,'workspace':w})
-            with self.assertRaises(Conflict):s.exams(w,0)
+            p=Path(d)/'db.sqlite3';s=Store(p);uid=s.register('alice','password123')['id']
+            self.assertEqual(s.exams(uid)['revision'],0)
+            s.exams(uid,w,0)
+            self.assertEqual(Store(p).exams(uid),{'revision':1,'workspace':w})
+            with self.assertRaises(Conflict):s.exams(uid,w,0)
     def test_reject_invalid_states_and_choices(self):
         w=workspace()
         for mutate in [lambda r:r.update(deadline=r['deadline']+1),lambda r:r['blocks'][0]['questions'][0].update(chosen=True),lambda r:r['blocks'][0]['questions'][0].update(order=[0,0,1]),lambda r:r['blocks'][1]['questions'][0].update(chosen=0),lambda r:r['blocks'][0].update(subject='law'),lambda r:r.update(status='complete')]:

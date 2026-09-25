@@ -57,6 +57,18 @@ wezla (adresu nie zapisujemy w repo, patrz `k3s/README.md` / "Ochrona originu").
 - **Ochrona**: kontrola `Host` i `Origin` (DNS rebinding), naglowek `X-Na-Fali`
   jako zapora CSRF na zadaniach mutujacych, baza nigdy nie jest serwowana.
   `/api/health` celowo poza kontrola hosta — sonda kubeletu uzywa IP poda.
+- **Konta (2026-09-25)**: samodzielna rejestracja, hasla scrypt, sesja w cookie
+  `HttpOnly; SameSite=Lax` (+`Secure` z `SECURE_COOKIES=1`), historia, `generation`
+  i egzaminy per konto (schemat v3, migracja z v2 przenosi ewentualna wspolna historie
+  na konto zastepcze `#legacy`). Tresc kursu publiczna, dane za `401`. Opcjonalny
+  `REGISTRATION_CODE` z sekretu `na-fali-registration`. Limit 10 prob logowania /
+  rejestracji na 5 minut na adres (`CF-Connecting-IP`).
+- **Naprawiony baner „Nie mozna otworzyc historii”** po wdrozeniu: serwer zwracal
+  `bankVersion: contentRevision` bez `schemaVersion`, pusty workspace egzaminow jako
+  `null` i po skasowaniu historii sam licznik zamiast pelnego stanu — klient odrzucal
+  kazda z tych odpowiedzi. Teraz `state()` zwraca `schemaVersion: 2` i `BANK_VERSION`
+  parsowany ze strony, pusty workspace ma ksztalt `{active: null, history: []}`,
+  a `clear()` zwraca pelny stan.
 
 Smoke test lokalny: strona 1 690 125 B z `const DATA=`, zapis i odczyt podejscia,
 `/data/course.sqlite3` -> 404, zly Host -> 403, brak `X-Na-Fali` -> 403,
@@ -117,7 +129,7 @@ Dwa bledy na brakujacych plikach, ktorych celowo nie sfabrykowalem:
 CI uruchamia na razie `tests.test_server tests.test_exams` (z komentarzem dlaczego).
 Inaczej te dwa bledy blokowalyby build obrazu i nic by sie nie wdrozylo.
 
-## 7. Otwarta decyzja: dwie architektury
+## 7. Rozstrzygniete: jedna architektura
 
 `tests/test_deployment.py` opisuje **inna aplikacje** niz ta, ktora wdrazamy:
 
@@ -125,12 +137,13 @@ Inaczej te dwa bledy blokowalyby build obrazu i nic by sie nie wdrozylo.
 |---|---|---|
 | Baza | SQLite na PVC | Postgres jako StatefulSet |
 | Framework | biblioteka standardowa Pythona | Django (`django-key`, Job bootstrapu) |
-| Sekrety | brak | `na-fali-db`, `na-fali-bootstrap`, `na-fali-db-admin` |
+| Sekrety | `ghcr-pull`, opcjonalny `na-fali-registration` | `na-fali-db`, `na-fali-bootstrap`, `na-fali-db-admin` |
 | Siec | — | dwie NetworkPolicy |
 | TLS | Cloudflare | `na-fali-tls` w Ingressie |
 
-Ta druga pasuje do pustych katalogow `accounts/`, `templates/registration/`,
-`config/`, `src/`. Nie tworzylem drugiej, sprzecznej sciezki wdrozenia obok
-dzialajacej — **do rozstrzygniecia: docelowo Django + Postgres, czy zostajemy
-przy SQLite?** Od tej odpowiedzi zalezy, czy `scripts/configure-k3s.py` ma
-powstac, czy `test_deployment.py` nalezy usunac.
+**Decyzja (2026-09-25): zostajemy przy bibliotece standardowej i SQLite.** Konta
+uzytkownikow, ktorych brakowalo, zostaly dobudowane do istniejacego `server.py`
+(patrz §3), wiec wariant Django + Postgres nie ma juz powodu istniec. Puste katalogi
+`accounts/`, `templates/registration/`, `config/`, `src/`, `offline/`, `scripts/` to
+pozostalosci tego niezbudowanego wariantu; `tests/test_deployment.py` zostaje
+niezbudowany i poza CI.

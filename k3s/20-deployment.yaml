@@ -44,6 +44,15 @@ spec:
             # DNS rebinding), wiec domena musi byc tu wymieniona.
             - name: ALLOWED_HOSTS
               value: na-fali.shugo.com.pl
+            # TLS konczy sie na Cloudflare, origin mowi czystym HTTP — serwer nie
+            # jest w stanie sam wywnioskowac, ze cookie sesji ma miec flage Secure.
+            - name: SECURE_COOKIES
+              value: "1"
+            # Kod wymagany przy rejestracji. Sekret tworzy sie recznie i celowo nie
+            # ma go w gicie (repo publiczne); brak sekretu = rejestracja otwarta.
+            - name: REGISTRATION_CODE
+              valueFrom:
+                secretKeyRef: { name: na-fali-registration, key: code, optional: true }
           ports:
             - name: http
               containerPort: 8080
